@@ -15,11 +15,11 @@ using UnityEngine.AddressableAssets;
 using UnityEngine.Networking;
 using UnityEngine.UIElements;
 
+[assembly: HG.Reflection.SearchableAttribute.OptInAttribute]
 namespace TweaksForDaltonGoesFast
 {
     [BepInDependency(R2API.R2API.PluginGUID)]
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
-    [R2APISubmoduleDependency(nameof(CommandHelper))]
     [NetworkCompatibility(CompatibilityLevel.NoNeedForSync, VersionStrictness.DifferentModVersionsAreOk)]
     public class TweaksForDaltonGoesFast : BaseUnityPlugin
     {
@@ -28,7 +28,7 @@ namespace TweaksForDaltonGoesFast
         public const string PluginGUID = PluginAuthor + "." + PluginName;
         public const string PluginAuthor = "GiGaGon";
         public const string PluginName = "TweaksForDaltonGoesFast";
-        public const string PluginVersion = "1.0.0"; 
+        public const string PluginVersion = "1.0.3"; 
 
         internal class ModConfig
         {
@@ -38,6 +38,7 @@ namespace TweaksForDaltonGoesFast
             public static ConfigEntry<bool> blockSafeWardInteraction;
             public static ConfigEntry<string> trustedPlayerList;
             public static ConfigEntry<float> simulacrumRewardVectorMultiplyer;
+            public static ConfigEntry<string> interactionBlockMessage;
 
             public static void InitConfig(ConfigFile config)
             {
@@ -47,6 +48,7 @@ namespace TweaksForDaltonGoesFast
                 blockSafeWardInteraction =         config.Bind("General", "Block SafeWard Interaction",        true, "Block non-trusted players from interacting with the Safe Ward"                                              );
                 trustedPlayerList =                config.Bind("General", "Trusted Player List",                 "", "Comma seperated list of trusted player ids. Will get copied when installed from modpack code, so watch out.");
                 simulacrumRewardVectorMultiplyer = config.Bind("General", "Simulacrum Reward Vector Multiplyer", 1f, "Float to multiply the velocity of Simularcum reward item droplets by.");
+                interactionBlockMessage =          config.Bind("General", "Interaction Blocked Message", "Non-trusted player {player_name} tried to activate {interactable_name}, interaction blocked.", "Message to send when an interaction is blocked. The special strings {player_name} and {interactable_name} will be replaced with the relevent details when sent.");
             }
         }
 
@@ -112,10 +114,10 @@ namespace TweaksForDaltonGoesFast
                             }
                         }
                     }
+                    Config.Reload();
                     return loc2 * ModConfig.simulacrumRewardVectorMultiplyer.Value;
                 });
             };
-
 
             [ConCommand(commandName = "TFD.TrustPlayer")]
             static void TrustPlayer(ConCommandArgs args)
@@ -146,46 +148,38 @@ namespace TweaksForDaltonGoesFast
 
             On.RoR2.Interactor.PerformInteraction += (orig, self, interactableObject) =>
             {
+                Config.Reload();
                 string[] blacklistNames = new string[] {"Portal", "Seer", "Teleporter", "SafeWard"};
-                Debug.Log("TweaksForDaltonGoesFast - 3a");
 
                 string[] blacklistFilter = blacklistNames.Where(x => interactableObject.name.Contains(x)).ToArray();
-                Debug.Log("TweaksForDaltonGoesFast - 3b");
 
                 if (blacklistFilter.Length == 0) { orig(self, interactableObject); return; }
-                Debug.Log("TweaksForDaltonGoesFast - 3c");
 
                 Config.TryGetEntry("General", $"Block {blacklistFilter[0]} Interaction", out ConfigEntry<bool> releventConfig);
-                Debug.Log("TweaksForDaltonGoesFast - 3d");
 
 
                 if (!releventConfig.Value) { orig(self, interactableObject); return; }
-                Debug.Log("TweaksForDaltonGoesFast - 3e");
 
                 if (self.GetComponent<CharacterBody>() == PlayerCharacterMasterController.instances[0].master.GetBody()) { orig(self, interactableObject); return; }
-                Debug.Log("TweaksForDaltonGoesFast - 3f");
 
                 string[] splitPlayerList = ModConfig.trustedPlayerList.Value.Split(',').Where(x => x != "").ToArray();
-                Debug.Log("TweaksForDaltonGoesFast - 3h");
 
                 if (splitPlayerList.Length > 0)
                 {
-                    Debug.Log("TweaksForDaltonGoesFast - 3i");
 
                     foreach (string playerName in splitPlayerList)
                     {
-                        Debug.Log("TweaksForDaltonGoesFast - 3j");
 
                         if (self.GetComponent<CharacterBody>().GetUserName().Contains(playerName))
                         {
-                            Debug.Log("TweaksForDaltonGoesFast - 3k");
-
-                            orig(self, interactableObject); Debug.Log("TFD.trustskip"); return;
+                            orig(self, interactableObject); return;
                         }
                     }
                 }
 
-                Chat.SendBroadcastChat(new Chat.SimpleChatMessage { baseToken = "<color=#ff0000>{0}</color>", paramTokens = new[] { $"Non-host player {self.GetComponent<CharacterBody>().GetUserName()} tried to activate {blacklistFilter[0]}." } });
+                Config.TryGetEntry("General", "Interaction Blocked Message", out ConfigEntry<string> baseChatMessage);
+                Chat.SendBroadcastChat(new Chat.SimpleChatMessage { baseToken = "<color=#ff0000>{0}</color>", paramTokens = new[] { baseChatMessage.Value.Replace("{player_name}", self.GetComponent<CharacterBody>().GetUserName()).Replace("{interactable_name}", blacklistFilter[0]) } });
+                
             };
 
             [ConCommand(commandName = "TFD.TogglePortalBlocking")]
