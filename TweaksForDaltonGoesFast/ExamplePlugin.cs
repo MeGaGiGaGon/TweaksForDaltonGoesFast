@@ -28,7 +28,7 @@ namespace TweaksForDaltonGoesFast
         public const string PluginGUID = PluginAuthor + "." + PluginName;
         public const string PluginAuthor = "GiGaGon";
         public const string PluginName = "TweaksForDaltonGoesFast";
-        public const string PluginVersion = "1.0.3"; 
+        public const string PluginVersion = "1.0.4"; 
 
         internal class ModConfig
         {
@@ -151,12 +151,12 @@ namespace TweaksForDaltonGoesFast
                 Config.Reload();
                 string[] blacklistNames = new string[] {"Portal", "Seer", "Teleporter", "SafeWard"};
 
+                if (interactableObject == null) { orig(self, interactableObject); return; }
                 string[] blacklistFilter = blacklistNames.Where(x => interactableObject.name.Contains(x)).ToArray();
 
                 if (blacklistFilter.Length == 0) { orig(self, interactableObject); return; }
 
                 Config.TryGetEntry("General", $"Block {blacklistFilter[0]} Interaction", out ConfigEntry<bool> releventConfig);
-
 
                 if (!releventConfig.Value) { orig(self, interactableObject); return; }
 
@@ -176,10 +176,7 @@ namespace TweaksForDaltonGoesFast
                         }
                     }
                 }
-
-                Config.TryGetEntry("General", "Interaction Blocked Message", out ConfigEntry<string> baseChatMessage);
-                Chat.SendBroadcastChat(new Chat.SimpleChatMessage { baseToken = "<color=#ff0000>{0}</color>", paramTokens = new[] { baseChatMessage.Value.Replace("{player_name}", self.GetComponent<CharacterBody>().GetUserName()).Replace("{interactable_name}", blacklistFilter[0]) } });
-                
+                Chat.SendBroadcastChat(new Chat.SimpleChatMessage { baseToken = "<color=#ff0000>{0}</color>", paramTokens = new[] { ModConfig.interactionBlockMessage.Value.Replace("{player_name}", self.GetComponent<CharacterBody>().GetUserName()).Replace("{interactable_name}", blacklistFilter[0]) } });
             };
 
             [ConCommand(commandName = "TFD.TogglePortalBlocking")]
