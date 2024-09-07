@@ -1,34 +1,33 @@
 using BepInEx;
 using BepInEx.Configuration;
 using HarmonyLib;
-using JetBrains.Annotations;
 using Mono.Cecil.Cil;
 using MonoMod.Cil;
-using R2API;
 using R2API.Utils;
 using RoR2;
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.AddressableAssets;
 using UnityEngine.Networking;
-using UnityEngine.UIElements;
+using static RoR2.GenericPickupController;
 
 [assembly: HG.Reflection.SearchableAttribute.OptInAttribute]
+
 namespace TweaksForDaltonGoesFast
 {
-    [BepInDependency(R2API.R2API.PluginGUID)]
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
     [NetworkCompatibility(CompatibilityLevel.NoNeedForSync, VersionStrictness.DifferentModVersionsAreOk)]
     public class TweaksForDaltonGoesFast : BaseUnityPlugin
     {
+        public static TweaksForDaltonGoesFast instance;
+
         private static Harmony test;
 
         public const string PluginGUID = PluginAuthor + "." + PluginName;
         public const string PluginAuthor = "GiGaGon";
         public const string PluginName = "TweaksForDaltonGoesFast";
-        public const string PluginVersion = "1.0.4"; 
+        public const string PluginVersion = "1.0.6"; 
 
         internal class ModConfig
         {
@@ -54,78 +53,84 @@ namespace TweaksForDaltonGoesFast
 
         public void Awake()
         {
-            test = Harmony.CreateAndPatchAll(typeof(MonoBehaviourCallbackHooks));
+            instance = this;
 
-            CommandHelper.AddToConsoleWhenReady();
+            test = Harmony.CreateAndPatchAll(typeof(MonoBehaviourCallbackHooks));
 
             ModConfig.InitConfig(Config);
 
             IL.RoR2.InfiniteTowerWaveController.DropRewards += (il) =>
             {
                 ILCursor c = new(il);
+
+                // Patch position vector to player position
                 c.GotoNext(
-                    x => x.MatchLdloc(6),
+                    x => x.MatchLdloca(6),
                     x => x.MatchLdloc(4),
-                    x => x.MatchLdloc(2)
-                    );
+                    x => x.MatchStfld<CreatePickupInfo>(nameof(CreatePickupInfo.position))
+                );
                 c.Index += 2;
                 c.Emit(OpCodes.Ldloc, 5);
-                c.EmitDelegate<Func<Vector3, int, Vector3>>((loc4, loc5) =>
+                c.EmitDelegate<Func<Vector3, int, Vector3>>((original_position, index) =>
                 {
-                    Debug.Log("TweaksForDaltonGoesFast - 1a");
-                    if (loc5 < PlayerCharacterMasterController.instances.Count)
-                    {
-                        Debug.Log("TweaksForDaltonGoesFast - 2a");
-                        var player = PlayerCharacterMasterController.instances[loc5];
-                        Debug.Log("TweaksForDaltonGoesFast - 3a");
-                        if (!player.master.IsDeadAndOutOfLivesServer())
-                        {
-                            Debug.Log("TweaksForDaltonGoesFast - 4a");
-                            if (player.master.GetBody().transform.position != null)
-                            {
-                                Debug.Log("TweaksForDaltonGoesFast - 5a");
-                                return player.master.GetBody().transform.position;
-                            }
-                        }
+                    if (index >= PlayerCharacterMasterController.instances.Count) {
+                        return original_position;
                     }
-                    return loc4;
-                }); 
 
-                c.Index += 1;
+                    var player = PlayerCharacterMasterController.instances[index];
+
+                    if (
+                        player.master.IsDeadAndOutOfLivesServer()
+                        || player.master.GetBody().transform == null
+                        || player.master.GetBody().transform.position == null
+                    )
+                    {
+                        return original_position;
+                    }
+
+                    return player.master.GetBody().transform.position;
+                });
+
+                // Patch velocity vector
+                c.GotoNext(
+                    x => x.MatchDup(),
+                    x => x.MatchLdfld<CreatePickupInfo>(nameof(CreatePickupInfo.position)),
+                    x => x.MatchLdloc(2)
+                );
+                c.Index += 3;
                 c.Emit(OpCodes.Ldloc, 5);
-                c.EmitDelegate<Func<Vector3, int, Vector3>>((loc2, loc5) =>
+                c.EmitDelegate<Func<Vector3, int, Vector3>>((original_velocity, index) =>
                 {
-                    Debug.Log("TweaksForDaltonGoesFast - 1b");
-
-                    if (loc5 < PlayerCharacterMasterController.instances.Count)
-                    Debug.Log("TweaksForDaltonGoesFast - 2b");
+                    if (index >= PlayerCharacterMasterController.instances.Count)
                     {
-                        var player = PlayerCharacterMasterController.instances[loc5];
-                        Debug.Log("TweaksForDaltonGoesFast - 3b");
-
-                        if (!player.master.IsDeadAndOutOfLivesServer())
-                        {
-                            Debug.Log("TweaksForDaltonGoesFast - 4b");
-                            if (player.master.GetBody().transform.position != null)
-                            {
-                                Debug.Log("TweaksForDaltonGoesFast - 5b");
-
-                                return new Vector3(0, 0, 0);
-                            }
-                        }
+                        Config.Reload();
+                        return original_velocity * ModConfig.simulacrumRewardVectorMultiplyer.Value;
                     }
-                    Config.Reload();
-                    return loc2 * ModConfig.simulacrumRewardVectorMultiplyer.Value;
+
+                    var player = PlayerCharacterMasterController.instances[index];
+
+                    if (
+                        player.master.IsDeadAndOutOfLivesServer()
+                        || player.master.GetBody().transform == null
+                        || player.master.GetBody().transform.position == null
+                    )
+                    {
+                        Config.Reload();
+                        return original_velocity * ModConfig.simulacrumRewardVectorMultiplyer.Value;
+                    }
+
+                    return Vector3.zero;
+
                 });
             };
 
-            [ConCommand(commandName = "TFD.TrustPlayer")]
+            [ConCommand(commandName = "TFD.TrustPlayer", flags = ConVarFlags.None, helpText = "Add a player name to the trusted player list.")]
             static void TrustPlayer(ConCommandArgs args)
             {
                 ModConfig.trustedPlayerList.Value += $",{args.GetArgString(0)}";
             }
 
-            [ConCommand(commandName = "TFD.TrustedPlayerList")]
+            [ConCommand(commandName = "TFD.TrustedPlayerList", flags = ConVarFlags.None, helpText = "Show the trusted player list.")]
             static void TrustedPlayerList(ConCommandArgs args)
             {
                 foreach(string x in ModConfig.trustedPlayerList.Value.Split(',')) 
@@ -134,7 +139,7 @@ namespace TweaksForDaltonGoesFast
                 }
             }
 
-            [ConCommand(commandName = "TFD.UntrustPlayer")]
+            [ConCommand(commandName = "TFD.UntrustPlayer", flags = ConVarFlags.None, helpText = "Remove all names from the player list that contain the given ")]
             static void UntrustPlayer(ConCommandArgs args)
             {
                 var newList = ModConfig.trustedPlayerList.Value.Split(',').Where(x => !x.Contains(args.GetArgString(0))).ToArray();
@@ -180,16 +185,16 @@ namespace TweaksForDaltonGoesFast
             };
 
             [ConCommand(commandName = "TFD.TogglePortalBlocking")]
-            void TogglePortalBlocking(ConCommandArgs args) { ModConfig.blockPortalInteraction.Value = !ModConfig.blockPortalInteraction.Value; Config.Reload(); }
+            static void TogglePortalBlocking(ConCommandArgs args) { ModConfig.blockPortalInteraction.Value = !ModConfig.blockPortalInteraction.Value; instance.Config.Reload(); }
 
             [ConCommand(commandName = "TFD.ToggleSeerBlocking")]
-            void ToggleSeerBlocking(ConCommandArgs args) { ModConfig.blockSeerInteraction.Value = !ModConfig.blockSeerInteraction.Value; Config.Reload(); }
+            static void ToggleSeerBlocking(ConCommandArgs args) { ModConfig.blockSeerInteraction.Value = !ModConfig.blockSeerInteraction.Value; instance.Config.Reload(); }
 
             [ConCommand(commandName = "TFD.ToggleTeleporterBlocking")]
-            void ToggleTeleporterBlocking(ConCommandArgs args) { ModConfig.blockTeleporterInteraction.Value = !ModConfig.blockTeleporterInteraction.Value; Config.Reload(); }
+            static void ToggleTeleporterBlocking(ConCommandArgs args) { ModConfig.blockTeleporterInteraction.Value = !ModConfig.blockTeleporterInteraction.Value; instance.Config.Reload(); }
 
             [ConCommand(commandName = "TFD.ToggleSafeWardBlocking")]
-            void ToggleSafeWardBlocking(ConCommandArgs args) { ModConfig.blockSafeWardInteraction.Value = !ModConfig.blockSafeWardInteraction.Value; Config.Reload(); }
+            static void ToggleSafeWardBlocking(ConCommandArgs args) { ModConfig.blockSafeWardInteraction.Value = !ModConfig.blockSafeWardInteraction.Value; instance.Config.Reload(); }
 
 
             On.EntityStates.Missions.BrotherEncounter.EncounterFinished.OnEnter += (orig, self) =>
